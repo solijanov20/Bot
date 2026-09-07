@@ -7,7 +7,7 @@ from telebot import types
 
 TOKEN = '8781754588:AAE54MW3W7xuy8Tx9bvP3JTgkrK59VuBPv4'
 ADMIN_ID = 1256682649
-CHANNEL_ID = -1002118852337  # Majburiy obuna kanali ID raqami
+CHANNEL_ID = -1002118852337  # Boshlang'ich majburiy kanal ID raqami
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -34,6 +34,7 @@ def init_db():
             channel_name TEXT
         )
     ''')
+    # Asosiy kanalni bazaga qo'shib qo'yamiz
     cursor.execute('REPLACE INTO channels (channel_id, channel_name) VALUES (?, ?)', (str(CHANNEL_ID), "Uznetfilm Asosiy Kanal"))
     conn.commit()
     conn.close()
@@ -72,7 +73,7 @@ def webhook():
 def index():
     return 'HELLO, WORLD!'
 
-# Admin panelni chiqarish
+# Admin panel menyusini chiqarish
 def show_admin_panel(chat_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -98,12 +99,23 @@ def send_welcome(message):
         show_admin_panel(message.chat.id)
     else:
         if not check_subscription(user_id):
+            conn = sqlite3.connect('movies.db')
+            cursor = conn.cursor()
+            cursor.execute('SELECT channel_id, channel_name FROM channels')
+            channels = cursor.fetchall()
+            conn.close()
+
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("📢 Kanalga obuna bo'lish", url="https://t.me/c/2118852337/1"))
+            for ch in channels:
+                ch_id = ch[0]
+                link_chat = ch_id[4:] if ch_id.startswith('-100') else ch_id
+                markup.add(types.InlineKeyboardButton(f"📢 {ch[1]} ga obuna bo'lish", url=f"https://t.me/{link_chat}"))
+            
             markup.add(types.InlineKeyboardButton("🔄 Tekshirish", callback_data="check_sub"))
+            
             bot.send_message(
                 message.chat.id, 
-                "⚠️ Botdan foydalanish uchun oldin majburiy kanalimizga obuna bo'ling!", 
+                "⚠️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'lishingiz kerak!", 
                 reply_markup=markup
             )
             return
@@ -120,6 +132,7 @@ def cmd_panel(message):
     if message.from_user.id == ADMIN_ID:
         show_admin_panel(message.chat.id)
 
+# Admin amallari va jarayonlari
 @bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID)
 def handle_admin_actions(message):
     user_id = message.from_user.id
@@ -139,9 +152,11 @@ def handle_admin_actions(message):
         
         resp = "📢 Majburiy kanallar ro'yxati:\n\n"
         for idx, ch in enumerate(channels, 1):
-            resp += f"{idx}. ID: {ch[0]} | Nomi: {ch[1]}\n"
+            resp += f"{idx}. Nomi: {ch[1]} | ID: `{ch[0]}`\n"
         
-        bot.send_message(message.chat.id, resp)
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("➕ Kanal qo'shish", callback_data="add_channel"))
+        bot.send_message(message.chat.id, resp, parse_mode="Markdown", reply_markup=markup)
         return
 
     elif text == "🤖 Bot holati":
@@ -187,6 +202,7 @@ def handle_admin_actions(message):
         bot.send_message(message.chat.id, f"👥 Adminlar ro'yxati:\n\n1. Asosiy Admin (ID: `{ADMIN_ID}`)", parse_mode="Markdown")
         return
 
+    # Kino yuklash jarayoni
     if user_id in upload_sessions:
         session = upload_sessions[user_id]
         step = session.get('step')
@@ -224,8 +240,32 @@ def handle_admin_actions(message):
                     bot.send_message(message.chat.id, "Iltimos, video yuboring yoki tugatish uchun **`/tugadi`** deb yozing.", parse_mode="Markdown")
             return
 
+        # Kanal qo'shish jarayoni (ID so'rash)
+        elif step == 'waiting_channel_id':
+            session['ch_id'] = text.strip()
+            session['step'] = 'waiting_channel_name'
+            bot.send_message(message.chat.id, "Endi kanal nomini kiriting (masalan: Uznetfilm):")
+            return
+
+        # Kanal qo'shish jarayoni (Nomi so'rash va saqlash)
+        elif step == 'waiting_channel_name':
+            ch_id = session['ch_id']
+            ch_name = text.strip()
+
+            conn = sqlite3.connect('movies.db')
+            cursor = conn.cursor()
+            cursor.execute('REPLACE INTO channels (channel_id, channel_name) VALUES (?, ?)', (ch_id, ch_name))
+            conn.commit()
+            conn.close()
+
+            del upload_sessions[user_id]
+            show_admin_panel(message.chat.id)
+            bot.send_message(message.chat.id, f"Kanal muvaffaqiyatli qo'shildi! ✅\nNomi: {ch_name}\nID: `{ch_id}`", parse_mode="Markdown")
+            return
+
     show_admin_panel(message.chat.id)
 
+# Oddiy foydalanuvchilarning kino so'rashi
 @bot.message_handler(func=lambda message: True)
 def handle_user_request(message):
     user_id = message.from_user.id
@@ -236,14 +276,21 @@ def handle_user_request(message):
     conn.commit()
 
     if not check_subscription(user_id):
+        cursor.execute('SELECT channel_id, channel_name FROM channels')
+        channels = cursor.fetchall()
         conn.close()
+
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("📢 Kanalga obuna bo'lish", url="https://t.me/c/2118852337/1"))
+        for ch in channels:
+            ch_id = ch[0]
+            link_chat = ch_id[4:] if ch_id.startswith('-100') else ch_id
+            markup.add(types.InlineKeyboardButton(f"📢 {ch[1]} ga obuna bo'lish", url=f"https://t.me/{link_chat}"))
+        
         markup.add(types.InlineKeyboardButton("🔄 Tekshirish", callback_data="check_sub"))
         
         bot.send_message(
             message.chat.id, 
-            "⚠️ Botdan foydalanish uchun oldin majburiy kanalimizga obuna bo'ling!", 
+            "⚠️ Botdan foydalanish uchun quyidagi kanallarga obuna bo'lishingiz kerak!", 
             reply_markup=markup
         )
         return
@@ -282,6 +329,11 @@ def callback_handler(call):
             bot.send_message(call.message.chat.id, text)
         else:
             bot.answer_callback_query(call.id, "Siz hali kanalga obuna bo'lmadingiz!", show_alert=True)
+            
+    elif call.data == "add_channel":
+        if call.from_user.id == ADMIN_ID:
+            upload_sessions[ADMIN_ID] = {'step': 'waiting_channel_id'}
+            bot.send_message(call.message.chat.id, "Yangi kanal ID sini yuboring (masalan: `-100123456789` yoki `@kanal_username`):", parse_mode="Markdown")
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
