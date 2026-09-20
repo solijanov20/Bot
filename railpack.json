@@ -1,5 +1,6 @@
 {
-  "python": {
-    "version": "3.11"
+  "$schema": "https://schema.railpack.com",
+  "packages": {
+    "python": "3.11"
   }
 }
